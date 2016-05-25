@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
 
+import os
 import sys
 import socket
+import base64
 import sqlite3
 
 
 HOST = '0.0.0.0'
 PORT = 23333
-MAX_CONNECTIONS = 5
+MAX_CONNECTIONS = 1
+SEGMENT_SZIE = 20480000
+DB_PATH = './dbs/sync.db'
+
+
+db = sqlite3.connect(DB_PATH)
+cursor = db.cursor()
 
 
 def invalid_command(params):
@@ -18,45 +26,76 @@ def ping_command(params):
     return 'Pong'
 
 
-def read_command(params):
-    pass
+def last_command(params):
+    cursor.execute('SELECT id FROM images ORDER BY ID DESC LIMIT 1')
+    rs = cursor.fetchone()
+    if rs:
+        return str(rs[0])
+    else:
+        return None
+
+def sync_command(params):
+    id_ = params
+    cursor.execute('SELECT id, data FROM images WHERE id > ? ORDER BY ID LIMIT 1', (id_,))
+    data = cursor.fetchone()
+    img = base64.b64encode(data[1])
+    print len(img)
+    packet = '{} {}'.format(data[0], img)
+    if data is None:
+        return None
+    return packet
 
 
-commands = {
-    'PING': ping_command,
-    'READ': read_command,
-}
+def shutdown(params):
+    raise IOError()
 
 
-def loop(host, port):
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((host, port))
-    server.listen(MAX_CONNECTIONS)
-    print 'listen %s:%s' % (host, port)
+class Server(object):
 
-    while True:
-        connection, address = server.accept()
-        connection.settimeout(60)
+    commands = {
+        'PING': ping_command,
+        'LAST': last_command,
+        'SYNC': sync_command,
+        'SHUTDOWN': shutdown,
+    }
 
-        print 'Connected from %s' % str(address)
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self.server = None
 
-        msg = connection.recv(2048)
+    def run(self):
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.bind((self.host, self.port))
+        self.server.listen(MAX_CONNECTIONS)
+        print 'listen %s:%s' % (self.host, self.port)
 
-        if msg is not None:
-            split_msg = msg.split(' ', 1)
-            if len(split_msg) > 1:
-                command, params = split_msg
-            else:
-                command = split_msg[0]
-                params = None
+        while True:
+            connection, address = self.server.accept()
 
-            command_handler = commands.get(command, invalid_command)
-            result = command_handler(params)
+            print 'Connected from %s' % str(address)
 
-            if result is not None:
-                connection.send('OK\r\n%s' % result)
+            while True:
+                msg = connection.recv(SEGMENT_SZIE)
 
-        connection.close()
+                if msg is not None:
+                    split_msg = msg.split(' ', 1)
+                    if len(split_msg) > 1:
+                        command, params = split_msg
+                    else:
+                        command = split_msg[0]
+                        params = None
+
+                    # print command
+                    if command == 'CLOSE':
+                        break
+                    command_handler = self.commands.get(command, invalid_command)
+                    result = command_handler(params)
+
+                    if result is not None:
+                        connection.send(result)
+
+            connection.close()
 
 
 def main():
@@ -69,7 +108,8 @@ def main():
         host = sys.argv[1]
         port = sys.argv[2]
 
-    loop(host, port)
+    server = Server(host, port)
+    server.run()
 
 
 if __name__ == '__main__':
