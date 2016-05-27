@@ -7,8 +7,8 @@ import sqlite3
 
 HOST = '127.0.0.1'
 PORT = 23333
-SEGMENT_SZIE = 20480000
-DB_PATH = './dbs/empty.db'
+SEGMENT_SZIE = 1024
+DB_PATH = '/Users/shonenada/Projects/toys/img-server/db/1.db'
 
 db = sqlite3.connect(DB_PATH)
 cursor = db.cursor()
@@ -43,7 +43,14 @@ class Client(object):
 
     def sync_from_server(self, id_):
         self.client.sendall('SYNC %s' % id_)
-        return self.client.recv(SEGMENT_SZIE)
+        data = []
+        tmp = ''
+        while True:
+            tmp = self.client.recv(4)
+            if tmp == '\r\n\r\n':
+                break
+            data.append(tmp)
+        return ''.join(data)
 
     def close(self):
         self.client.sendall('CLOSE')
@@ -55,6 +62,7 @@ class Client(object):
     def sync(self):
         last = self.last()
         if last == 'None':
+            print 'last is None'
             return
         this_last = self.get_last()
         if this_last is None:
@@ -66,11 +74,12 @@ class Client(object):
     def sync_once(self, last_id):
         data = self.sync_from_server(last_id)
         id_, b64img = data.split(' ', 1)
-        print 'Inserting %s' % id_
+        print 'Inserting %s' % id_, len(b64img)
         img = base64.b64decode(b64img)
-        cursor.execute('INSERT INTO images(id, data) VALUES(?,?)', [id_, buffer(img)])
+        cursor.execute('INSERT INTO images(id, data) VALUES(?,?)',
+                       [id_, buffer(img)])
         db.commit()
-        self.sync()
+        # self.sync()
 
 
 def main():
@@ -86,6 +95,7 @@ def main():
 
     client.sync()
 
+    client.shutdown()
     client.close()
 
 
