@@ -79,7 +79,7 @@ class Client(object):
         cursor.execute('INSERT INTO images(id, data) VALUES(?,?)',
                        [id_, buffer(img)])
         db.commit()
-        # self.sync()
+        self.sync()
 
 
 def main():
@@ -95,7 +95,6 @@ def main():
 
     client.sync()
 
-    client.shutdown()
     client.close()
 
 
