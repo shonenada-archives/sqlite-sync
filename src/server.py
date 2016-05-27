@@ -10,7 +10,7 @@ import sqlite3
 HOST = '0.0.0.0'
 PORT = 23333
 MAX_CONNECTIONS = 1
-SEGMENT_SZIE = 20480000
+SEGMENT_SZIE = 1024
 DB_PATH = './dbs/sync.db'
 
 
@@ -39,7 +39,6 @@ def sync_command(params):
     cursor.execute('SELECT id, data FROM images WHERE id > ? ORDER BY ID LIMIT 1', (id_,))
     data = cursor.fetchone()
     img = base64.b64encode(data[1])
-    print len(img)
     packet = '{} {}'.format(data[0], img)
     if data is None:
         return None
@@ -93,7 +92,7 @@ class Server(object):
                     result = command_handler(params)
 
                     if result is not None:
-                        connection.send(result)
+                        connection.send(result + '\r\n\r\n')
 
             connection.close()
 
