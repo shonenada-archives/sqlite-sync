@@ -10,6 +10,8 @@ PORT = 23333
 SEGMENT_SZIE = 1024
 DB_PATH = '/Users/shonenada/Projects/toys/img-server/db/1.db'
 
+END = '\r\n\r\n'
+
 db = sqlite3.connect(DB_PATH)
 cursor = db.cursor()
 
@@ -29,27 +31,46 @@ class Client(object):
         self.client.sendall('PING')
         return self.client.recv(SEGMENT_SZIE)
 
-    def get_last(self):
-        cursor.execute('SELECT id FROM images ORDER BY ID DESC LIMIT 1')
+    def get_last(self, tbl):
+        cursor.execute('SELECT id FROM %s ORDER BY ID DESC LIMIT 1' % tbl)
         rs = cursor.fetchone()
         if rs:
             return rs[0]
         else:
             return None
 
-    def last(self):
-        self.client.sendall('LAST')
+    def last(self, tbl):
+        self.client.sendall('LAST %s' % tbl)
         return self.client.recv(SEGMENT_SZIE)
+
+    def get_tables(self):
+        self.client.sendall('SCHEMA')
+        data = self.client.recv(SEGMENT_SZIE).strip()
+        return data.split()
+
+    def get_columns(self, table):
+        self.client.sendall('COLUMNS %s' % table)
+        data = self.client.recv(SEGMENT_SZIE).strip()
+        return data.split()
 
     def sync_from_server(self, id_):
         self.client.sendall('SYNC %s' % id_)
+        return self._recv()
+
+    def _recv(self):
         data = []
         tmp = ''
         while True:
             tmp = self.client.recv(4)
-            if tmp == '\r\n\r\n':
+            if END in tmp:
                 break
             data.append(tmp)
+            if len(data) > 1:
+                last_pair = ''.join(data[-2:-1])
+                if END in last_pair:
+                    data[-2] = last_pair[:last_pair.find(END)]
+                    data.pop()
+                    break
         return ''.join(data)
 
     def close(self):
@@ -60,29 +81,41 @@ class Client(object):
         self.client.sendall('SHUTDOWN')
 
     def sync(self):
-        last = self.last()
-        if last == 'None':
-            print 'last is None'
-            return
-        this_last = self.get_last()
-        if this_last is None:
-            this_last = 0
+        tbls = self.get_tables()
+        for tbl in tbls:
+            last = self.last(tbl)
+            if last == 'None':
+                print 'last is None'
+                return
+            this_last = self.get_last(tbl)
+            if this_last is None:
+                this_last = 0
 
-        if int(this_last) < int(last):
-            self.sync_once(this_last)
+            if int(this_last) < int(last):
+                columns = self.get_columns(tbl)
+                self.sync_once(tbl, columns, this_last)
 
-    def sync_once(self, last_id):
+    def sync_once(self, tbl, columns, last_id):
         data = self.sync_from_server(last_id)
         id_, b64img = data.split(' ', 1)
         print 'Inserting %s' % id_, len(b64img)
         img = base64.b64decode(b64img)
-        cursor.execute('INSERT INTO images(id, data) VALUES(?,?)',
-                       [id_, buffer(img)])
+        sql = self.build_sql(tbl, columns)
+        cursor.execute(sql, [id_, buffer(img)])
         db.commit()
         self.sync()
 
+    def build_sql(self, tbl, columns):
+        sql = ('INSERT INTO %s(%s) VALUES(?,?)' %
+               (tbl, ', '.join(columns)))
+        return sql
+
+    def build_data(self, data):
+        pass
+
 
 def main():
+    shutdown = False
     if len(sys.argv) == 1:
         host, port = HOST, PORT
     elif len(sys.argv) == 2:
@@ -90,11 +123,25 @@ def main():
     elif len(sys.argv) == 3:
         host = sys.argv[1]
         port = sys.argv[2]
+        if port == 'shutdown':
+            port = PORT
+            shutdown = True
+    elif len(sys.argv) == 4:
+        host = sys.argv[1]
+        port = sys.argv[2]
+        shutdown = True
 
     client = Client(host, port)
 
-    client.sync()
-
+    '''
+    if shutdown:
+        client.shutdown()
+    else:
+        client.sync()
+    '''
+    for tbl in client.get_tables():
+        print client.get_columns(tbl)
+    client.shutdown()
     client.close()
 
 
